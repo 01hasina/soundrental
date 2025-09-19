@@ -45,7 +45,7 @@ class Reservation extends Model
     protected $casts = [
         'id_user' => 'int',
         'event_date' => 'datetime',
-        'event_time' => 'time without time zone',
+        'event_time' => 'datetime:H:i:s',
         'duration_hours' => 'int',
         'estimated_price' => 'float',
         'final_price' => 'float',
