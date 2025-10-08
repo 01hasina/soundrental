@@ -41,6 +41,10 @@ class Reservation extends Model
     protected $connection = 'pgsql';
     protected $table = 'reservations';
     protected $primaryKey = 'id_reservation';
+    
+    // 🔹 corrige la correspondance des timestamps
+    const CREATED_AT = 'reservation_date';
+    const UPDATED_AT = 'updated_at';
 
     protected $casts = [
         'id_user' => 'int',

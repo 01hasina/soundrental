@@ -59,3 +59,29 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+
+
+## RESERVATION INSERTION (FUNCTION STORE)
+METHOD POST
+URL: http://127.0.0.1:8000/api/reservations
+donnee: 
+{
+  "event_date": "2025-10-10",
+  "event_time": "18:00:00",
+  "duration_hours": 5,
+  "location": "Salle des fêtes - Tana",
+  "products": [
+    { "id_product": 1, "quantity": 1 }   // si inventory pour id_product=1 < 3 -> erreur 409
+  ],
+  "bundles": []
+}
+
+
+## RESERVATION UPDATE (FUNCTION UPDATE) --> afaka apiasaina rehefa hi confirmer reservation
+METHOD PATCH
+URL: http://127.0.0.1:8000/api/reservations/{id}
+donnee: 
+{
+  "status": "confirmed"
+}
+

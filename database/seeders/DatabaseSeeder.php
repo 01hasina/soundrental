@@ -11,16 +11,14 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        // Désactiver les contraintes de clés étrangères pour faire le truncate
+        // Désactiver les contraintes de clés étrangères pour vider proprement
         Schema::disableForeignKeyConstraints();
 
-        // truncate de tous les tables pour eviter les doublons
         DB::table('maintenance')->truncate();
-        DB::table('reservation_bundles')->truncate();
-        DB::table('reservation_products')->truncate();
         DB::table('payments')->truncate();
         DB::table('quotes')->truncate();
         DB::table('invoices')->truncate();
+        DB::table('reservation_inventory')->truncate();
         DB::table('reservations')->truncate();
         DB::table('inventory')->truncate();
         DB::table('bundle_products')->truncate();
@@ -30,22 +28,25 @@ class DatabaseSeeder extends Seeder
         DB::table('users')->truncate();
         DB::table('roles')->truncate();
 
-        // Réactiver les contraintes avant l'insertion des données
         Schema::enableForeignKeyConstraints();
 
-        // Roles
+        // =========================
+        // 1. Roles
+        // =========================
         DB::table('roles')->insert([
             ['name' => 'client'],
             ['name' => 'admin'],
         ]);
 
-        // Users
+        // =========================
+        // 2. Users
+        // =========================
         DB::table('users')->insert([
             [
                 'first_name' => 'Admin',
                 'last_name' => 'Sound',
                 'email' => 'admin@soundrental.com',
-                'password' => Hash::make('admin123'), // mot de passe hashé
+                'password' => Hash::make('admin123'),
                 'phone' => '0321234567',
                 'address' => 'Antananarivo, Madagascar',
                 'id_role' => 2, // admin
@@ -63,14 +64,18 @@ class DatabaseSeeder extends Seeder
             ],
         ]);
 
-        // Categories
+        // =========================
+        // 3. Categories
+        // =========================
         DB::table('categories')->insert([
             ['name' => 'Sonorisation'],
             ['name' => 'Éclairage'],
             ['name' => 'Accessoires'],
         ]);
 
-        // Products
+        // =========================
+        // 4. Products
+        // =========================
         DB::table('products')->insert([
             [
                 'name' => 'Microphone Shure SM58',
@@ -92,7 +97,9 @@ class DatabaseSeeder extends Seeder
             ],
         ]);
 
-        // Bundles
+        // =========================
+        // 5. Bundles
+        // =========================
         DB::table('bundles')->insert([
             [
                 'name' => 'Pack Concert',
@@ -103,13 +110,14 @@ class DatabaseSeeder extends Seeder
             ]
         ]);
 
-        // Bundle ↔ Products
         DB::table('bundle_products')->insert([
             ['id_bundle' => 1, 'id_product' => 1, 'quantity' => 2],
             ['id_bundle' => 1, 'id_product' => 2, 'quantity' => 2],
         ]);
 
-        // Inventory
+        // =========================
+        // 6. Inventory
+        // =========================
         DB::table('inventory')->insert([
             [
                 'id_product' => 1,
@@ -127,7 +135,9 @@ class DatabaseSeeder extends Seeder
             ],
         ]);
 
-        // Reservations
+        // =========================
+        // 7. Reservations
+        // =========================
         DB::table('reservations')->insert([
             [
                 'id_user' => 2, // client
@@ -141,17 +151,16 @@ class DatabaseSeeder extends Seeder
             ],
         ]);
 
-        // Reservation ↔ Products
-        DB::table('reservation_products')->insert([
-            ['id_reservation' => 1, 'id_product' => 1, 'quantity' => 1],
+        // =========================
+        // 8. Reservation ↔ Inventory
+        // =========================
+        DB::table('reservation_inventory')->insert([
+            ['id_reservation' => 1, 'id_inventory' => 1],
         ]);
 
-        // Reservation ↔ Bundles
-        DB::table('reservation_bundles')->insert([
-            ['id_reservation' => 1, 'id_bundle' => 1, 'quantity' => 1],
-        ]);
-
-        // Payments
+        // =========================
+        // 9. Payments
+        // =========================
         DB::table('payments')->insert([
             [
                 'id_reservation' => 1,
@@ -163,7 +172,9 @@ class DatabaseSeeder extends Seeder
             ],
         ]);
 
-        // Quotes
+        // =========================
+        // 10. Quotes
+        // =========================
         DB::table('quotes')->insert([
             [
                 'id_reservation' => 1,
@@ -174,7 +185,9 @@ class DatabaseSeeder extends Seeder
             ],
         ]);
 
-        // Invoices
+        // =========================
+        // 11. Invoices
+        // =========================
         DB::table('invoices')->insert([
             [
                 'id_reservation' => 1,
@@ -183,10 +196,12 @@ class DatabaseSeeder extends Seeder
             ],
         ]);
 
-        // Maintenance
+        // =========================
+        // 12. Maintenance
+        // =========================
         DB::table('maintenance')->insert([
             [
-                'id_inventory' => 1, // ex: Microphone
+                'id_inventory' => 1,
                 'start_date' => '2025-09-01',
                 'end_date' => '2025-09-05',
                 'description' => 'Révision du microphone et remplacement du câble',
@@ -194,7 +209,7 @@ class DatabaseSeeder extends Seeder
                 'status' => 'completed',
             ],
             [
-                'id_inventory' => 2, // ex: Enceinte JBL
+                'id_inventory' => 2,
                 'start_date' => '2025-09-10',
                 'end_date' => '2025-09-15',
                 'description' => 'Réparation du haut-parleur',
@@ -202,6 +217,5 @@ class DatabaseSeeder extends Seeder
                 'status' => 'in_progress',
             ],
         ]);
-        
     }
 }

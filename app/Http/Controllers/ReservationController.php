@@ -19,7 +19,6 @@ class ReservationController extends Controller
     //     return response()->json($reservations);
     // }
 
-    // Créer une réservation
     public function store(Request $request)
     {
         $request->validate([
@@ -35,7 +34,7 @@ class ReservationController extends Controller
             'bundles.*.quantity' => 'required|integer|min:1',
         ]);
 
-        // Construire la table des quantités nécessaires par produit
+        // Calculer les quantités nécessaires par produit
         $requiredPerProduct = [];
 
         if ($request->filled('products')) {
@@ -43,8 +42,7 @@ class ReservationController extends Controller
                 $pid = (int) $p['id_product'];
                 $qty = (int) $p['quantity'];
                 if ($qty <= 0) continue;
-                if (!isset($requiredPerProduct[$pid])) $requiredPerProduct[$pid] = 0;
-                $requiredPerProduct[$pid] += $qty;
+                $requiredPerProduct[$pid] = ($requiredPerProduct[$pid] ?? 0) + $qty;
             }
         }
 
@@ -58,37 +56,39 @@ class ReservationController extends Controller
                 if ($bundleQty <= 0) continue;
                 foreach ($bundle->products as $bp) {
                     $prodId = (int) $bp->id_product;
-                    $perBundleQty = (int) $bp->pivot->quantity; // quantité de ce produit par bundle
-                    $needed = $perBundleQty * $bundleQty;
-                    if (!isset($requiredPerProduct[$prodId])) $requiredPerProduct[$prodId] = 0;
-                    $requiredPerProduct[$prodId] += $needed;
+                    $perBundleQty = (int) $bp->pivot->quantity;
+                    $requiredPerProduct[$prodId] = ($requiredPerProduct[$prodId] ?? 0) + ($perBundleQty * $bundleQty);
                 }
             }
         }
 
         DB::beginTransaction();
         try {
-            // Vérification atomique de la disponibilité : lockForUpdate sur les lignes d'inventaire pertinentes
+            $reservedInventories = [];
+
+            // Vérification et verrouillage des inventaires disponibles
             foreach ($requiredPerProduct as $prodId => $neededQty) {
-                // compter les inventaires disponibles et verrouiller les lignes
-                $availableCount = DB::table('inventory')
+                $inventories = DB::table('inventory')
                     ->where('id_product', $prodId)
                     ->where('is_available', true)
                     ->lockForUpdate()
-                    ->count();
+                    ->limit($neededQty)
+                    ->get();
 
-                if ($availableCount < $neededQty) {
+                if ($inventories->count() < $neededQty) {
                     DB::rollBack();
                     $product = Product::find($prodId);
                     $name = $product ? $product->name : "ID $prodId";
                     return response()->json([
                         'success' => false,
-                        'message' => "Indisponible : le produit '{$name}' nécessite {$neededQty} exemplaire(s) mais seulement {$availableCount} disponible(s)."
+                        'message' => "Indisponible : le produit '{$name}' nécessite {$neededQty} exemplaire(s) mais seulement {$inventories->count()} disponible(s)."
                     ], 409);
                 }
+
+                $reservedInventories[$prodId] = $inventories;
             }
 
-            // Tout est disponible -> créer la réservation
+            // Créer la réservation
             $user = $request->user();
             $reservation = Reservation::create([
                 'id_user' => $user->id_user,
@@ -99,46 +99,17 @@ class ReservationController extends Controller
                 'status' => 'pending',
             ]);
 
-            // Attacher produits directs (pivot reservation_products)
-            if ($request->filled('products')) {
-                foreach ($request->input('products') as $p) {
-                    $reservation->products()->attach($p['id_product'], ['quantity' => $p['quantity']]);
-                }
-            }
-
-            // Attacher bundles (pivot reservation_bundles)
-            if ($request->filled('bundles')) {
-                foreach ($request->input('bundles') as $b) {
-                    $reservation->bundles()->attach($b['id_bundle'], ['quantity' => $b['quantity']]);
-                }
-            }
-
-            // Maintenant marquer les inventaires réservés : utiliser requiredPerProduct pour ne faire la mise à jour qu'une seule fois par produit
-            foreach ($requiredPerProduct as $prodId => $neededQty) {
-                // on récupère les N premières lignes disponibles verrouillées et on les met à false
-                $inventories = DB::table('inventory')
-                    ->where('id_product', $prodId)
-                    ->where('is_available', true)
-                    ->lockForUpdate()
-                    ->limit($neededQty)
-                    ->get();
-
-                // Sécurité : si, pour une raison quelconque, on a moins de lignes (improbable ici), rollback
-                if ($inventories->count() < $neededQty) {
-                    DB::rollBack();
-                    $product = Product::find($prodId);
-                    $name = $product ? $product->name : "ID $prodId";
-                    return response()->json([
-                        'success' => false,
-                        'message' => "Erreur de réservation : inventaire insuffisant pour '{$name}' (attendu {$neededQty}, trouvé {$inventories->count()})."
-                    ], 500);
-                }
-
-                // Mettre à jour chaque ligne d'inventaire
+            // Marquer les inventaires réservés et insérer dans reservation_inventory
+            foreach ($reservedInventories as $prodId => $inventories) {
                 foreach ($inventories as $inv) {
-                    DB::table('inventory')->where('id_inventory', $inv->id_inventory)->update([
-                        'is_available' => false
+                    DB::table('reservation_inventory')->insert([
+                        'id_reservation' => $reservation->id_reservation,
+                        'id_inventory' => $inv->id_inventory
                     ]);
+
+                    DB::table('inventory')
+                        ->where('id_inventory', $inv->id_inventory)
+                        ->update(['is_available' => false]);
                 }
             }
 
@@ -147,7 +118,7 @@ class ReservationController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Réservation créée avec succès.',
-                'reservation' => $reservation->load('products', 'bundles', 'user')
+                'reservation' => $reservation->load('user', 'payments', 'quotes', 'invoices')
             ], 201);
 
         } catch (\Exception $e) {
@@ -171,7 +142,7 @@ class ReservationController extends Controller
     // Mettre à jour une réservation
     public function update(Request $request, $id)
     {
-        $reservation = Reservation::with('products', 'bundles')->findOrFail($id);
+        $reservation = Reservation::findOrFail($id);
 
         $request->validate([
             'event_date' => 'nullable|date',
@@ -188,120 +159,105 @@ class ReservationController extends Controller
 
         DB::beginTransaction();
         try {
-            // Rendre disponible les inventaires précédemment réservés
-            foreach ($reservation->products as $prod) {
-                $inventories = Inventory::where('id_product', $prod->id_product)
-                    ->where('is_available', false)
-                    ->take($prod->pivot->quantity)
+            // 1️⃣ Rendre disponibles tous les inventaires précédemment réservés
+            $previousInventories = DB::table('reservation_inventory')
+                ->where('id_reservation', $reservation->id_reservation)
+                ->get();
+
+            foreach ($previousInventories as $inv) {
+                DB::table('inventory')
+                    ->where('id_inventory', $inv->id_inventory)
+                    ->update(['is_available' => true]);
+            }
+
+            // Supprimer les anciennes entrées dans reservation_inventory
+            DB::table('reservation_inventory')
+                ->where('id_reservation', $reservation->id_reservation)
+                ->delete();
+
+            // 2️⃣ Calculer les quantités nécessaires par produit (produits + bundles)
+            $requiredPerProduct = [];
+
+            if ($request->filled('products')) {
+                foreach ($request->input('products') as $p) {
+                    $pid = (int) $p['id_product'];
+                    $qty = (int) $p['quantity'];
+                    if ($qty <= 0) continue;
+                    $requiredPerProduct[$pid] = ($requiredPerProduct[$pid] ?? 0) + $qty;
+                }
+            }
+
+            if ($request->filled('bundles')) {
+                foreach ($request->input('bundles') as $b) {
+                    $bundle = Bundle::with('products')->findOrFail($b['id_bundle']);
+                    $bundleQty = (int) $b['quantity'];
+                    if ($bundleQty <= 0) continue;
+                    foreach ($bundle->products as $bp) {
+                        $prodId = (int) $bp->id_product;
+                        $perBundleQty = (int) $bp->pivot->quantity;
+                        $requiredPerProduct[$prodId] = ($requiredPerProduct[$prodId] ?? 0) + ($perBundleQty * $bundleQty);
+                    }
+                }
+            }
+
+            // 3️⃣ Vérification disponibilité et récupération des inventaires
+            $reservedInventories = [];
+            foreach ($requiredPerProduct as $prodId => $neededQty) {
+                $inventories = DB::table('inventory')
+                    ->where('id_product', $prodId)
+                    ->where('is_available', true)
+                    ->lockForUpdate()
+                    ->limit($neededQty)
                     ->get();
+
+                if ($inventories->count() < $neededQty) {
+                    DB::rollBack();
+                    $product = Product::find($prodId);
+                    $name = $product ? $product->name : "ID $prodId";
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Indisponible : le produit '{$name}' nécessite {$neededQty} exemplaire(s) mais seulement {$inventories->count()} disponible(s)."
+                    ], 409);
+                }
+
+                $reservedInventories[$prodId] = $inventories;
+            }
+
+            // 4️⃣ Mettre à jour les infos de la réservation
+            $reservation->update($request->only(['event_date', 'event_time', 'duration_hours', 'location', 'status']));
+
+            // 5️⃣ Réserver les inventaires et les insérer dans reservation_inventory
+            foreach ($reservedInventories as $prodId => $inventories) {
                 foreach ($inventories as $inv) {
-                    $inv->is_available = true;
-                    $inv->save();
-                }
-            }
+                    DB::table('reservation_inventory')->insert([
+                        'id_reservation' => $reservation->id_reservation,
+                        'id_inventory' => $inv->id_inventory
+                    ]);
 
-            foreach ($reservation->bundles as $bundle) {
-                foreach ($bundle->products as $bp) {
-                    $requiredQty = $bp->pivot->quantity * $bundle->pivot->quantity;
-                    $inventories = Inventory::where('id_product', $bp->id_product)
-                        ->where('is_available', false)
-                        ->take($requiredQty)
-                        ->get();
-                    foreach ($inventories as $inv) {
-                        $inv->is_available = true;
-                        $inv->save();
-                    }
-                }
-            }
-
-            // Vérification disponibilité des nouveaux produits
-            if ($request->products) {
-                foreach ($request->products as $p) {
-                    $availableCount = Inventory::where('id_product', $p['id_product'])
-                        ->where('is_available', true)
-                        ->count();
-                    if ($availableCount < $p['quantity']) {
-                        return response()->json([
-                            'message' => "Le produit ID {$p['id_product']} n'a pas assez de stock disponible."
-                        ], 400);
-                    }
-                }
-            }
-
-            // Vérification disponibilité des nouveaux bundles
-            if ($request->bundles) {
-                foreach ($request->bundles as $b) {
-                    $bundle = Bundle::findOrFail($b['id_bundle']);
-                    foreach ($bundle->products as $bp) {
-                        $requiredQty = $bp->pivot->quantity * $b['quantity'];
-                        $availableCount = Inventory::where('id_product', $bp->id_product)
-                            ->where('is_available', true)
-                            ->count();
-                        if ($availableCount < $requiredQty) {
-                            return response()->json([
-                                'message' => "Le produit '{$bp->name}' dans le bundle '{$bundle->name}' n'a pas assez de stock disponible."
-                            ], 400);
-                        }
-                    }
-                }
-            }
-
-            // Mise à jour des informations de réservation
-            $reservation->update($request->only(['event_date', 'event_time', 'duration_hours', 'location']));
-
-            // Mise à jour des produits
-            $reservation->products()->detach();
-            if ($request->products) {
-                foreach ($request->products as $p) {
-                    $reservation->products()->attach($p['id_product'], ['quantity' => $p['quantity']]);
-
-                    $inventories = Inventory::where('id_product', $p['id_product'])
-                        ->where('is_available', true)
-                        ->take($p['quantity'])
-                        ->get();
-                    foreach ($inventories as $inv) {
-                        $inv->is_available = false;
-                        $inv->save();
-                    }
-                }
-            }
-
-            // Mise à jour des bundles
-            $reservation->bundles()->detach();
-            if ($request->bundles) {
-                foreach ($request->bundles as $b) {
-                    $bundle = Bundle::findOrFail($b['id_bundle']);
-                    $reservation->bundles()->attach($b['id_bundle'], ['quantity' => $b['quantity']]);
-
-                    foreach ($bundle->products as $bp) {
-                        $requiredQty = $bp->pivot->quantity * $b['quantity'];
-                        $inventories = Inventory::where('id_product', $bp->id_product)
-                            ->where('is_available', true)
-                            ->take($requiredQty)
-                            ->get();
-                        foreach ($inventories as $inv) {
-                            $inv->is_available = false;
-                            $inv->save();
-                        }
-                    }
+                    DB::table('inventory')
+                        ->where('id_inventory', $inv->id_inventory)
+                        ->update(['is_available' => false]);
                 }
             }
 
             DB::commit();
 
             return response()->json([
-                'message' => 'Réservation mise à jour avec succès',
-                'reservation' => $reservation->load('products', 'bundles')
+                'success' => true,
+                'message' => 'Réservation mise à jour avec succès.',
+                'reservation' => $reservation->load('user', 'payments', 'quotes', 'invoices')
             ], 200);
 
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
-                'message' => 'Erreur lors de la mise à jour de la réservation',
+                'success' => false,
+                'message' => 'Erreur lors de la mise à jour de la réservation.',
                 'error' => $e->getMessage()
             ], 500);
         }
     }
+
 
     // Supprimer une réservation
     public function destroy($id)
