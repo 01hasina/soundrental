@@ -13,11 +13,11 @@ use Illuminate\Support\Facades\DB;
 class ReservationController extends Controller
 {
     // Liste toutes les réservations
-    // public function index()
-    // {
-    //     $reservations = Reservation::with(['user', 'products', 'bundles'])->get();
-    //     return response()->json($reservations);
-    // }
+    public function index()
+    {
+        $reservations = Reservation::with(['user', 'products', 'bundles'])->get();
+        return response()->json($reservations);
+    }
 
     // Créer une réservation
     public function store(Request $request)
