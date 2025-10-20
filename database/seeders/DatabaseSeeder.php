@@ -199,23 +199,23 @@ class DatabaseSeeder extends Seeder
         // =========================
         // 12. Maintenance
         // =========================
-        DB::table('maintenance')->insert([
-            [
-                'id_inventory' => 1,
-                'start_date' => '2025-09-01',
-                'end_date' => '2025-09-05',
-                'description' => 'Révision du microphone et remplacement du câble',
-                'cost' => 15000,
-                'status' => 'completed',
-            ],
-            [
-                'id_inventory' => 2,
-                'start_date' => '2025-09-10',
-                'end_date' => '2025-09-15',
-                'description' => 'Réparation du haut-parleur',
-                'cost' => 50000,
-                'status' => 'in_progress',
-            ],
-        ]);
+        // DB::table('maintenance')->insert([
+        //     [
+        //         'id_inventory' => 1,
+        //         'start_date' => '2025-09-01',
+        //         'end_date' => '2025-09-05',
+        //         'description' => 'Révision du microphone et remplacement du câble',
+        //         'cost' => 15000,
+        //         'status' => 'completed',
+        //     ],
+        //     [
+        //         'id_inventory' => 2,
+        //         'start_date' => '2025-09-10',
+        //         'end_date' => '2025-09-15',
+        //         'description' => 'Réparation du haut-parleur',
+        //         'cost' => 50000,
+        //         'status' => 'in_progress',
+        //     ],
+        // ]);
     }
 }
