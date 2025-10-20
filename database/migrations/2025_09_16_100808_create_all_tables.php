@@ -75,7 +75,7 @@ return new class extends Migration
         Schema::create('bundle_products', function (Blueprint $table) {
             $table->unsignedBigInteger('id_bundle');
             $table->unsignedBigInteger('id_product');
-            $table->integer('quantity')->default(1);
+            $table->unsignedInteger('quantity')->default(1);
 
             $table->primary(['id_bundle', 'id_product']);
             $table->foreign('id_bundle')->references('id_bundle')->on('bundles')->onDelete('cascade');
@@ -94,27 +94,14 @@ return new class extends Migration
             $table->date('last_maintenance_date')->nullable();
             $table->boolean('is_available')->default(true);
             $table->text('notes')->nullable();
+            $table->timestamp('updated_at')->nullable();
 
             $table->foreign('id_product')->references('id_product')->on('products')->onDelete('cascade');
             $table->index('id_product');
         });
 
         // =========================
-        // 7. Inventory Movements
-        // =========================
-        Schema::create('inventory_movements', function (Blueprint $table) {
-            $table->bigIncrements('id_movement');
-            $table->unsignedBigInteger('id_inventory');
-            $table->enum('movement_type', ['entry','exit','return','loss','repair']);
-            $table->integer('quantity');
-            $table->timestamp('movement_date')->useCurrent();
-            $table->text('comment')->nullable();
-
-            $table->foreign('id_inventory')->references('id_inventory')->on('inventory')->onDelete('cascade');
-        });
-
-        // =========================
-        // 8. Maintenance
+        // 7. Maintenance
         // =========================
         Schema::create('maintenance', function (Blueprint $table) {
             $table->bigIncrements('id_maintenance');
@@ -129,7 +116,7 @@ return new class extends Migration
         });
 
         // =========================
-        // 9. Reservations
+        // 8. Reservations
         // =========================
         Schema::create('reservations', function (Blueprint $table) {
             $table->bigIncrements('id_reservation');
@@ -151,10 +138,14 @@ return new class extends Migration
             $table->index('event_date');
         });
 
+        // =========================
+        // 9. Reservation ↔ Inventory
+        // =========================
         Schema::create('reservation_inventory', function (Blueprint $table) {
             $table->bigIncrements('id_reservation_inventory');
             $table->unsignedBigInteger('id_reservation');
             $table->unsignedBigInteger('id_inventory');
+            
 
             $table->unique(['id_reservation','id_inventory']);
             $table->foreign('id_reservation')->references('id_reservation')->on('reservations')->onDelete('cascade');
@@ -162,7 +153,23 @@ return new class extends Migration
         });
 
         // =========================
-        // 10. Payments
+        // 10. Reservation ↔ Bundles
+        // =========================
+        Schema::create('reservation_bundles', function (Blueprint $table) {
+            $table->bigIncrements('id_reservation_bundle');
+            $table->unsignedBigInteger('id_reservation');
+            $table->unsignedBigInteger('id_bundle');
+            $table->unsignedInteger('quantity')->default(1);
+            $table->timestamp('reservation_date')->nullable();
+            $table->timestamp('update_at')->nullable();
+
+            $table->foreign('id_reservation')->references('id_reservation')->on('reservations')->onDelete('cascade');
+            $table->foreign('id_bundle')->references('id_bundle')->on('bundles')->onDelete('cascade');
+            $table->unique(['id_reservation', 'id_bundle']);
+        });
+
+        // =========================
+        // 11. Payments
         // =========================
         Schema::create('payments', function (Blueprint $table) {
             $table->bigIncrements('id_payment');
@@ -177,7 +184,7 @@ return new class extends Migration
         });
 
         // =========================
-        // 11. Quotes & Invoices
+        // 12. Quotes & Invoices
         // =========================
         Schema::create('quotes', function (Blueprint $table) {
             $table->bigIncrements('id_quote');
@@ -200,7 +207,47 @@ return new class extends Migration
         });
 
         // =========================
-        // 12. Trigger pour mise à jour du stock
+        // 13. Function PostgreSQL pour réserver un bundle
+        // =========================
+        DB::unprepared("
+            CREATE OR REPLACE FUNCTION reserve_bundle_inventory(p_reservation BIGINT, p_bundle BIGINT, p_qty INT)
+            RETURNS VOID AS $$
+            DECLARE
+                bp RECORD;
+                inv RECORD;
+                total_needed INT;
+            BEGIN
+                FOR bp IN SELECT * FROM bundle_products WHERE id_bundle = p_bundle LOOP
+                    total_needed := bp.quantity * p_qty;
+
+                    FOR inv IN
+                        SELECT * FROM inventory
+                        WHERE id_product = bp.id_product
+                          AND is_available = TRUE
+                        LIMIT total_needed
+                    LOOP
+                        -- Marquer l'inventaire comme réservé
+                        UPDATE inventory
+                        SET is_available = FALSE
+                        WHERE id_inventory = inv.id_inventory;
+
+                        -- Insérer dans reservation_inventory
+                        INSERT INTO reservation_inventory(id_reservation, id_inventory)
+                        VALUES (p_reservation, inv.id_inventory);
+                    END LOOP;
+
+                    IF (SELECT COUNT(*) FROM inventory
+                        WHERE id_product = bp.id_product
+                        AND is_available = TRUE) < 0 THEN
+                        RAISE EXCEPTION 'Produit % indisponible pour le bundle %', bp.id_product, p_bundle;
+                    END IF;
+                END LOOP;
+            END;
+            $$ LANGUAGE plpgsql;
+        ");
+
+        // =========================
+        // 14. Trigger pour mise à jour du stock
         // =========================
         DB::unprepared("
             CREATE OR REPLACE FUNCTION update_product_stock()
@@ -208,11 +255,10 @@ return new class extends Migration
             BEGIN
                 UPDATE products
                 SET stock_quantity = (
-                    SELECT COUNT(*)
-                    FROM inventory
+                    SELECT COUNT(*) FROM inventory
                     WHERE id_product = NEW.id_product
-                      AND is_available = TRUE
-                      AND condition NOT IN ('poor','retired')
+                    AND is_available = TRUE
+                    AND condition NOT IN ('poor','retired')
                 )
                 WHERE id_product = NEW.id_product;
                 RETURN NEW;
@@ -239,13 +285,16 @@ return new class extends Migration
 
     public function down(): void
     {
+        DB::unprepared("DROP FUNCTION IF EXISTS reserve_bundle_inventory(BIGINT, BIGINT, INT);");
+        DB::unprepared("DROP FUNCTION IF EXISTS update_product_stock();");
+
         Schema::dropIfExists('invoices');
         Schema::dropIfExists('quotes');
         Schema::dropIfExists('payments');
+        Schema::dropIfExists('reservation_bundles');
         Schema::dropIfExists('reservation_inventory');
         Schema::dropIfExists('reservations');
         Schema::dropIfExists('maintenance');
-        Schema::dropIfExists('inventory_movements');
         Schema::dropIfExists('inventory');
         Schema::dropIfExists('bundle_products');
         Schema::dropIfExists('bundles');
