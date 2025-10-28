@@ -22,6 +22,7 @@ class ProductController extends Controller
             'daily_price' => 'required|numeric',
             'replacement_cost' => 'nullable|numeric',
             'is_active' => 'boolean',
+             'stock_quantity' => 'nullable|numeric',
             'id_category' => 'nullable|exists:categories,id_category',
         ]);
 
@@ -46,6 +47,7 @@ class ProductController extends Controller
             'name' => 'sometimes|required|string|max:100',
             'description' => 'nullable|string',
             'daily_price' => 'sometimes|required|numeric',
+            'stock_quantity' => 'nullable|numeric',
             'replacement_cost' => 'nullable|numeric',
             'is_active' => 'boolean',
             'id_category' => 'nullable|exists:categories,id_category',

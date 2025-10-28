@@ -47,6 +47,7 @@ class Product extends Model
         'name',
         'description',
         'daily_price',
+        'stock_quantity',
         'replacement_cost',
         'is_active',
         'id_category'
